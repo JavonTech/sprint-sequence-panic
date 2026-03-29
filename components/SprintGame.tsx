@@ -1,6 +1,26 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+  useDroppable,
+  useDraggable,
+  type DragStartEvent,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,7 +64,7 @@ const ROUNDS: Round[] = [
       { id: 'f', name: 'Post the release notes', hint: "after it's live, not before" },
     ],
     correctOrder: ['a', 'b', 'c', 'd', 'e', 'f'],
-    explanation: ['Set up first — always', 'Fix what\'s broken BEFORE building new stuff', 'Now you can build', 'Test before anyone touches it', 'Ship it', 'Tell people what changed'],
+    explanation: ["Set up first — always", "Fix what's broken BEFORE building new stuff", 'Now you can build', 'Test before anyone touches it', 'Ship it', 'Tell people what changed'],
   },
   {
     label: "Your team's building a checkout flow. What breaks if you get the order wrong?",
@@ -82,10 +102,168 @@ const ROUNDS: Round[] = [
 
 const TIMES = [55, 45, 38]
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function shuffle<T>(arr: T[]): T[] {
   return [...arr].sort(() => Math.random() - 0.5)
+}
+
+// ── Drag components ───────────────────────────────────────────────────────────
+
+function PoolCard({ id, task, disabled }: { id: string; task: Task; disabled: boolean }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, disabled })
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      style={{
+        background: '#fff',
+        border: '0.5px solid #e0e0e0',
+        borderRadius: 8,
+        padding: '10px 12px',
+        marginBottom: 7,
+        cursor: disabled ? 'default' : isDragging ? 'grabbing' : 'grab',
+        userSelect: 'none',
+        opacity: isDragging ? 0.3 : 1,
+        touchAction: 'none',
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{task.name}</div>
+      <div style={{ fontSize: 11, color: '#999', marginTop: 3 }}>{task.hint}</div>
+    </div>
+  )
+}
+
+interface SeqCardProps {
+  id: string
+  task: Task
+  index: number
+  highlight?: 'correct' | 'wrong'
+  onRemove: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  isFirst: boolean
+  isLast: boolean
+  disabled: boolean
+}
+
+function SeqCard({ id, task, index, highlight, onRemove, onMoveUp, onMoveDown, isFirst, isLast, disabled }: SeqCardProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled })
+  const bg = highlight === 'correct' ? 'rgba(29,158,117,.25)' : highlight === 'wrong' ? 'rgba(226,75,74,.2)' : 'rgba(255,255,255,.12)'
+  const border = highlight === 'correct' ? '#5DCAA5' : highlight === 'wrong' ? '#F09595' : 'rgba(255,255,255,.2)'
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        background: bg,
+        border: `0.5px solid ${border}`,
+        borderRadius: 8,
+        padding: '9px 8px',
+        marginBottom: 7,
+        opacity: isDragging ? 0.3 : 1,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        touchAction: 'none',
+      }}
+      {...(!disabled ? { ...attributes, ...listeners } : {})}
+    >
+      {!disabled && (
+        <div style={{ fontSize: 15, color: 'rgba(255,255,255,.45)', flexShrink: 0, cursor: 'grab', lineHeight: 1 }}>⠿</div>
+      )}
+      <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'rgba(255,255,255,.2)', color: '#fff', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{index + 1}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{task.name}</div>
+        <div style={{ fontSize: 11, color: '#CECBF6', marginTop: 2 }}>{task.hint}</div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0 }}>
+        <button
+          onPointerDown={e => e.stopPropagation()}
+          onClick={onMoveUp}
+          disabled={isFirst}
+          style={{ width: 26, height: 26, borderRadius: 6, border: '0.5px solid rgba(255,255,255,.25)', background: 'rgba(255,255,255,.1)', color: '#fff', cursor: isFirst ? 'default' : 'pointer', opacity: isFirst ? 0.2 : 1, fontSize: 12 }}
+        >▲</button>
+        <button
+          onPointerDown={e => e.stopPropagation()}
+          onClick={onMoveDown}
+          disabled={isLast}
+          style={{ width: 26, height: 26, borderRadius: 6, border: '0.5px solid rgba(255,255,255,.25)', background: 'rgba(255,255,255,.1)', color: '#fff', cursor: isLast ? 'default' : 'pointer', opacity: isLast ? 0.2 : 1, fontSize: 12 }}
+        >▼</button>
+      </div>
+      <button
+        onPointerDown={e => e.stopPropagation()}
+        onClick={onRemove}
+        style={{ width: 26, height: 26, borderRadius: 6, border: '0.5px solid rgba(255,255,255,.2)', background: 'transparent', color: 'rgba(255,255,255,.6)', cursor: 'pointer', fontSize: 13 }}
+      >✕</button>
+    </div>
+  )
+}
+
+function TaskOverlay({ task }: { task: Task }) {
+  return (
+    <div style={{
+      background: '#fff',
+      border: '0.5px solid #e0e0e0',
+      borderRadius: 8,
+      padding: '10px 12px',
+      boxShadow: '0 8px 28px rgba(0,0,0,0.18)',
+      cursor: 'grabbing',
+      maxWidth: 320,
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{task.name}</div>
+      <div style={{ fontSize: 11, color: '#999', marginTop: 3 }}>{task.hint}</div>
+    </div>
+  )
+}
+
+function PoolDropzone({ children, isEmpty }: { children: React.ReactNode; isEmpty: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'pool-droppable' })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        minHeight: 280,
+        borderRadius: 8,
+        border: `1.5px dashed ${isOver ? '#999' : '#ccc'}`,
+        padding: 6,
+        background: isOver ? 'rgba(0,0,0,0.03)' : 'transparent',
+        transition: 'border-color 0.15s, background 0.15s',
+      }}
+    >
+      {isEmpty && !isOver && (
+        <div style={{ textAlign: 'center', color: '#ccc', fontSize: 12, padding: '40px 0' }}>All tasks moved →</div>
+      )}
+      {children}
+    </div>
+  )
+}
+
+function SeqDropzone({ children, hasItems, isOver }: { children: React.ReactNode; hasItems: boolean; isOver: boolean }) {
+  if (hasItems) return <>{children}</>
+  return (
+    <div style={{
+      minHeight: 280,
+      borderRadius: 8,
+      border: `2px dashed ${isOver ? '#AFA9EC' : '#7F77DD'}`,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      fontSize: 13,
+      color: '#CECBF6',
+      textAlign: 'center',
+      padding: 20,
+      background: isOver ? 'rgba(127,119,221,0.12)' : 'transparent',
+      transition: 'border-color 0.15s, background 0.15s',
+    }}>
+      <span style={{ fontSize: 28 }}>⬇</span>
+      <span>Drag tasks here</span>
+      <span style={{ fontSize: 11, color: '#AFA9EC' }}>Drag within this box to reorder</span>
+    </div>
+  )
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -106,12 +284,19 @@ export default function SprintGame() {
   const [email, setEmail] = useState('')
   const [emailSent, setEmailSent] = useState(false)
   const [emailLoading, setEmailLoading] = useState(false)
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [isMobile, setIsMobile] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const draggingRef = useRef<string | null>(null)
 
   const r = ROUNDS[round]
 
-  // Init round
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
   useEffect(() => {
     setPoolIds(shuffle(r.tasks).map(t => t.id))
     setSeqIds([])
@@ -121,7 +306,6 @@ export default function SprintGame() {
     setTimerSecs(TIMES[round])
   }, [round])
 
-  // Timer
   useEffect(() => {
     if (checked || phase !== 'playing') return
     timerRef.current = setInterval(() => {
@@ -222,6 +406,57 @@ export default function SprintGame() {
     })
   }
 
+  // ── dnd-kit drag handlers ──────────────────────────────────────────────────
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } })
+  )
+
+  const { setNodeRef: seqDropRef, isOver: isOverSeq } = useDroppable({ id: 'seq-droppable' })
+
+  function handleDragStart({ active }: DragStartEvent) {
+    setActiveId(active.id as string)
+  }
+
+  function handleDragEnd({ active, over }: DragEndEvent) {
+    setActiveId(null)
+    if (!over || checked) return
+
+    const dragId = active.id as string
+    const overId = over.id as string
+
+    const fromPool = poolIds.includes(dragId)
+    const fromSeq = seqIds.includes(dragId)
+
+    // → back to pool
+    if (overId === 'pool-droppable' || poolIds.includes(overId)) {
+      if (fromSeq) removeFromSeq(dragId)
+      return
+    }
+
+    // → onto seq container (empty state)
+    if (overId === 'seq-droppable') {
+      if (fromPool) addToSeq(dragId)
+      return
+    }
+
+    // → onto a seq item
+    if (seqIds.includes(overId)) {
+      if (fromPool) {
+        const overIdx = seqIds.indexOf(overId)
+        setPoolIds(p => p.filter(x => x !== dragId))
+        setSeqIds(s => { const n = [...s]; n.splice(overIdx, 0, dragId); return n })
+      } else if (fromSeq) {
+        const oldIdx = seqIds.indexOf(dragId)
+        const newIdx = seqIds.indexOf(overId)
+        if (oldIdx !== newIdx) setSeqIds(s => arrayMove(s, oldIdx, newIdx))
+      }
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+
   const handleEmailSubmit = async () => {
     if (!email.includes('@')) return
     setEmailLoading(true)
@@ -233,7 +468,7 @@ export default function SprintGame() {
       })
       setEmailSent(true)
     } catch {
-      setEmailSent(true) // fail silently in MVP
+      setEmailSent(true)
     }
     setEmailLoading(false)
   }
@@ -243,11 +478,9 @@ export default function SprintGame() {
       setPhase('wall')
     } else {
       setPhase('playing')
-      setRound(r => r + 1)
+      setRound(n => n + 1)
     }
   }
-
-  // ── Drag handlers ──────────────────────────────────────────────────────────
 
   const timerPct = Math.round((timerSecs / TIMES[round]) * 100)
   const timerColor = timerPct > 50 ? '#7F77DD' : timerPct > 25 ? '#EF9F27' : '#E24B4A'
@@ -256,7 +489,7 @@ export default function SprintGame() {
     : roundScore >= 15 ? "Good start — a few more reps and you'll get it"
     : "You'll get there — read the constraints next time"
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Wall ───────────────────────────────────────────────────────────────────
 
   if (phase === 'wall') {
     return (
@@ -298,13 +531,14 @@ export default function SprintGame() {
     )
   }
 
+  // ── Results ────────────────────────────────────────────────────────────────
+
   if (phase === 'results') {
     return (
       <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
         <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{r.label}</div>
         <div style={{ fontSize: 44, fontWeight: 600, marginBottom: 4 }}>{roundScore} pts</div>
         <div style={{ fontSize: 17, color: '#666', marginBottom: '1rem' }}>{grade}</div>
-
         <div style={{ textAlign: 'left', maxWidth: 440, margin: '0 auto 1.5rem', fontSize: 13 }}>
           {breakdown.map((row, i) => (
             <div key={i} style={{ display: 'flex', gap: 6, padding: '6px 0', borderBottom: '0.5px solid #e5e5e5', alignItems: 'baseline' }}>
@@ -314,13 +548,11 @@ export default function SprintGame() {
             </div>
           ))}
         </div>
-
         <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: '1.5rem' }}>
           {[0, 1, 2].map(i => (
             <span key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: i <= round ? '#7F77DD' : '#ddd', display: 'inline-block' }} />
           ))}
         </div>
-
         {round < 2 ? (
           <button onClick={nextRound} style={{ padding: '10px 24px', borderRadius: 8, border: 'none', background: '#534AB7', color: '#fff', fontWeight: 500, cursor: 'pointer', fontSize: 14 }}>
             Next scenario ({2 - round} left) →
@@ -334,9 +566,15 @@ export default function SprintGame() {
     )
   }
 
-  // Playing phase
+  // ── Playing ────────────────────────────────────────────────────────────────
+
   return (
-    <div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCorners}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       {/* HUD */}
       <div style={{ display: 'flex', gap: 10, marginBottom: '1rem', flexWrap: 'wrap' }}>
         {[
@@ -360,7 +598,9 @@ export default function SprintGame() {
       {/* How to play */}
       <div style={{ display: 'flex', gap: 10, background: '#E1F5EE', border: '0.5px solid #5DCAA5', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 12, color: '#085041', lineHeight: 1.6 }}>
         <span style={{ fontSize: 18, flexShrink: 0 }}>☝️</span>
-        <span><strong>How to play:</strong> Drag tasks from the left into the <strong style={{ color: '#3C3489' }}>purple box on the right</strong>. Use ↑ ↓ arrows to reorder. Hit <em>Check my sequence</em> when ready.</span>
+        <span>
+          <strong>How to play:</strong> Drag tasks from the {isMobile ? 'top box' : 'left'} into the <strong style={{ color: '#3C3489' }}>purple box {isMobile ? 'below' : 'on the right'}</strong>. Drag within the purple box to reorder, or use ↑ ↓. Hit <em>Check my sequence</em> when ready.
+        </span>
       </div>
 
       {/* Difficulty + scenario */}
@@ -377,96 +617,52 @@ export default function SprintGame() {
       </div>
 
       {/* Lanes */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 12 }}>
 
         {/* Pool */}
         <div style={{ background: '#eeece8', borderRadius: 12, padding: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#888', letterSpacing: '0.05em', marginBottom: 8 }}>TASK POOL — drag these across</div>
-          <div
-            style={{ minHeight: 320, borderRadius: 8, border: '1.5px dashed #ccc', padding: 6 }}
-            onDragOver={e => e.preventDefault()}
-            onDrop={e => {
-              e.preventDefault()
-              const id = draggingRef.current
-              if (!id || !seqIds.includes(id)) return
-              removeFromSeq(id)
-              draggingRef.current = null
-            }}
-          >
-            {poolIds.map(id => (
-              <div
-                key={id}
-                draggable
-                onDragStart={() => { draggingRef.current = id }}
-                onDragEnd={() => { draggingRef.current = null }}
-                style={{ background: '#fff', border: '0.5px solid #e0e0e0', borderRadius: 8, padding: '10px 12px', marginBottom: 7, cursor: 'grab', userSelect: 'none' }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{taskMap[id].name}</div>
-                <div style={{ fontSize: 11, color: '#999', marginTop: 3 }}>{taskMap[id].hint}</div>
-              </div>
-            ))}
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#888', letterSpacing: '0.05em', marginBottom: 8 }}>
+            TASK POOL — drag {isMobile ? 'down' : 'across'}
           </div>
+          <PoolDropzone isEmpty={poolIds.length === 0}>
+            {poolIds.map(id => (
+              <PoolCard key={id} id={id} task={taskMap[id]} disabled={checked} />
+            ))}
+          </PoolDropzone>
         </div>
 
         {/* Sequence */}
         <div style={{ background: '#534AB7', border: '2px solid #7F77DD', borderRadius: 12, padding: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#CECBF6', letterSpacing: '0.05em', marginBottom: 8 }}>YOUR SEQUENCE — drop here, reorder with arrows</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#CECBF6', letterSpacing: '0.05em', marginBottom: 8 }}>
+            YOUR SEQUENCE — drop here, drag to reorder
+          </div>
 
-          {seqIds.length === 0 ? (
-            <div
-              style={{ minHeight: 320, borderRadius: 8, border: '2px dashed #7F77DD', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: 13, color: '#CECBF6', textAlign: 'center', padding: 20 }}
-              onDragOver={e => e.preventDefault()}
-              onDrop={e => {
-                e.preventDefault()
-                const id = draggingRef.current
-                if (id && poolIds.includes(id)) addToSeq(id)
-                draggingRef.current = null
-              }}
-            >
-              <span style={{ fontSize: 28 }}>⬇</span>
-              <span>Drag tasks into this box</span>
-              <span style={{ fontSize: 11, color: '#AFA9EC' }}>Then use ↑ ↓ to order them correctly</span>
-            </div>
-          ) : (
-            <>
-              <div>
-                {seqIds.map((id, i) => {
-                  const hl = highlights[id]
-                  return (
-                    <div key={id} style={{
-                      display: 'flex', alignItems: 'center', gap: 7,
-                      background: hl === 'correct' ? 'rgba(29,158,117,.25)' : hl === 'wrong' ? 'rgba(226,75,74,.2)' : 'rgba(255,255,255,.12)',
-                      border: `0.5px solid ${hl === 'correct' ? '#5DCAA5' : hl === 'wrong' ? '#F09595' : 'rgba(255,255,255,.2)'}`,
-                      borderRadius: 8, padding: '9px 8px', marginBottom: 7,
-                    }}>
-                      <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'rgba(255,255,255,.2)', color: '#fff', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{i + 1}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{taskMap[id].name}</div>
-                        <div style={{ fontSize: 11, color: '#CECBF6', marginTop: 3 }}>{taskMap[id].hint}</div>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0 }}>
-                        <button onClick={() => moveSeq(id, -1)} disabled={i === 0} style={{ width: 26, height: 26, borderRadius: 6, border: '0.5px solid rgba(255,255,255,.25)', background: 'rgba(255,255,255,.1)', color: '#fff', cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? 0.2 : 1, fontSize: 12 }}>▲</button>
-                        <button onClick={() => moveSeq(id, 1)} disabled={i === seqIds.length - 1} style={{ width: 26, height: 26, borderRadius: 6, border: '0.5px solid rgba(255,255,255,.25)', background: 'rgba(255,255,255,.1)', color: '#fff', cursor: i === seqIds.length - 1 ? 'default' : 'pointer', opacity: i === seqIds.length - 1 ? 0.2 : 1, fontSize: 12 }}>▼</button>
-                      </div>
-                      <button onClick={() => removeFromSeq(id)} style={{ width: 26, height: 26, borderRadius: 6, border: '0.5px solid rgba(255,255,255,.2)', background: 'transparent', color: 'rgba(255,255,255,.6)', cursor: 'pointer', fontSize: 13 }}>✕</button>
-                    </div>
-                  )
-                })}
-              </div>
-              <div
-                style={{ minHeight: 36, borderRadius: 8, border: '1.5px dashed #7F77DD', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 6 }}
-                onDragOver={e => e.preventDefault()}
-                onDrop={e => {
-                  e.preventDefault()
-                  const id = draggingRef.current
-                  if (id && poolIds.includes(id)) addToSeq(id)
-                  draggingRef.current = null
-                }}
-              >
-                <span style={{ fontSize: 11, color: '#AFA9EC', pointerEvents: 'none' }}>drop here to add to bottom</span>
-              </div>
-            </>
-          )}
+          <div ref={seqDropRef}>
+            <SeqDropzone hasItems={seqIds.length > 0} isOver={isOverSeq && seqIds.length === 0}>
+              <SortableContext items={seqIds} strategy={verticalListSortingStrategy}>
+                {seqIds.map((id, i) => (
+                  <SeqCard
+                    key={id}
+                    id={id}
+                    task={taskMap[id]}
+                    index={i}
+                    highlight={highlights[id]}
+                    onRemove={() => removeFromSeq(id)}
+                    onMoveUp={() => moveSeq(id, -1)}
+                    onMoveDown={() => moveSeq(id, 1)}
+                    isFirst={i === 0}
+                    isLast={i === seqIds.length - 1}
+                    disabled={checked}
+                  />
+                ))}
+              </SortableContext>
+              {seqIds.length > 0 && (
+                <div style={{ minHeight: 32, borderRadius: 8, border: '1.5px dashed #7F77DD', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 6 }}>
+                  <span style={{ fontSize: 11, color: '#AFA9EC' }}>drop here to add to bottom</span>
+                </div>
+              )}
+            </SeqDropzone>
+          </div>
         </div>
       </div>
 
@@ -486,6 +682,11 @@ export default function SprintGame() {
           {feedback.msg}
         </div>
       )}
-    </div>
+
+      {/* Drag overlay — floating card while dragging */}
+      <DragOverlay dropAnimation={{ duration: 150, easing: 'ease' }}>
+        {activeId && taskMap[activeId] ? <TaskOverlay task={taskMap[activeId]} /> : null}
+      </DragOverlay>
+    </DndContext>
   )
 }
